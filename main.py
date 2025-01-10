@@ -5,7 +5,7 @@ from typing import Dict, Any
 import pandas as pd
 
 # Constants
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://mean-windows-rule.loca.lt"
 MAX_RETRIES = 10
 RETRY_DELAY = 1  # seconds
 
