@@ -1,145 +1,75 @@
 import streamlit as st
 import requests
 import time
-from typing import Dict, Any
-import pandas as pd
+from typing import Optional
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Constants
-BASE_URL = "https://mean-windows-rule.loca.lt"
 MAX_RETRIES = 10
 RETRY_DELAY = 1  # seconds
 
-def make_api_request(endpoint: str, method: str = "GET", data: Dict[Any, Any] = None, params: Dict[str, Any] = None) -> Dict:
-    """Make API request with retry logic"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            if method == "GET":
-                response = requests.get(f"{BASE_URL}{endpoint}", params=params)
-            else:  # POST
-                response = requests.post(f"{BASE_URL}{endpoint}", json=data, params=params)
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            if attempt == MAX_RETRIES - 1:
-                st.error(f"Failed to connect to the backend after {MAX_RETRIES} attempts: {str(e)}")
-                raise
-            time.sleep(RETRY_DELAY)
-            continue
-
-def config_section():
-    """Create the Vector Search Configuration section"""
-    with st.expander("Vector Search Configuration", expanded=True):
-        # Create a container for consistent padding and styling
-        with st.container():
-            # Doc Correlation with input field
-            col1, col2, col3 = st.columns([6, 2, 1])
-            with col1:
-                doc_correlation = st.slider(
-                    "Doc Correlation (optional)",
-                    min_value=0.0,
-                    max_value=0.95,
-                    value=0.85,
-                    step=0.01,
-                )
-            with col2:
-                doc_correlation = st.number_input(
-                    "",
-                    value=doc_correlation,
-                    min_value=0.0,
-                    max_value=0.95,
-                    step=0.01,
-                    key="doc_correlation_input",
-                    label_visibility="collapsed"
-                )
-            with col3:
-                st.write("/ 0.95")
-
-            # Recall Number with input field
-            col1, col2, col3 = st.columns([6, 2, 1])
-            with col1:
-                recall_number = st.slider(
-                    "Recall Number",
-                    min_value=1,
-                    max_value=50,
-                    value=10,
-                    step=1,
-                )
-            with col2:
-                recall_number = st.number_input(
-                    "",
-                    value=recall_number,
-                    min_value=1,
-                    max_value=50,
-                    step=1,
-                    key="recall_number_input",
-                    label_visibility="collapsed"
-                )
-            with col3:
-                st.write("/ 50")
-
-            # Knowledge retrieval weight with radio buttons
-            st.write("Knowledge retrieval weight ℹ️")
-            retrieval_weight = st.radio(
-                "",
-                options=["Mixed", "Semantic", "Keyword"],
-                horizontal=True,
-                key="retrieval_weight",
-                label_visibility="collapsed"
-            )
-
-            # Mixed percentage slider (only show if Mixed is selected)
-            if retrieval_weight == "Mixed":
-                col1, col2, col3 = st.columns([6, 2, 1])
-                with col1:
-                    mixed_percentage = st.slider(
-                        "",
-                        min_value=0,
-                        max_value=100,
-                        value=50,
-                        step=1,
-                        key="mixed_percentage_slider",
-                        label_visibility="collapsed"
-                    )
-                with col2:
-                    mixed_percentage = st.number_input(
-                        "",
-                        value=mixed_percentage,
-                        min_value=0,
-                        max_value=100,
-                        step=1,
-                        key="mixed_percentage_input",
-                        label_visibility="collapsed"
-                    )
-                with col3:
-                    st.write("/ 100%")
-
-            # Rerank Model with radio buttons
-            st.write("Rerank Model")
-            rerank_enabled = not st.radio(
-                "",
-                options=["Enable", "Disable"],
-                index=1,  # Default to Disable
-                horizontal=True,
-                key="rerank_model",
-                label_visibility="collapsed"
-            ) == "Disable"
-
-            # Return configuration values
-            return {
-                "doc_correlation": doc_correlation,
-                "recall_number": recall_number,
-                "retrieval_weight": retrieval_weight,
-                "mixed_percentage": mixed_percentage if retrieval_weight == "Mixed" else None,
-                "rerank_enabled": rerank_enabled
-            }
+class APIClient:
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip('/')
+        
+    def _make_request_with_retry(self, method: str, endpoint: str, **kwargs) -> Optional[dict]:
+        url = f"{self.base_url}{endpoint}"
+        retries = 0
+        
+        while retries < MAX_RETRIES:
+            try:
+                response = requests.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.RequestException as e:
+                retries += 1
+                logger.warning(f"Request failed (attempt {retries}/{MAX_RETRIES}): {str(e)}")
+                if retries < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    st.error(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
+                    return None
+                
+    def submit_query(self, query: str) -> Optional[dict]:
+        return self._make_request_with_retry(
+            'POST', 
+            '/query/submit',
+            json={"query": query}
+        )
+    
+    def retrieve_results(self) -> Optional[dict]:
+        return self._make_request_with_retry('POST', '/query/retrieve')
+    
+    def configure_search(self, config: dict) -> Optional[dict]:
+        return self._make_request_with_retry(
+            'POST',
+            '/vector-search/configure',
+            params=config
+        )
+    
+    def get_similar_queries(self, query: str, max_results: int = 5) -> Optional[dict]:
+        return self._make_request_with_retry(
+            'POST',
+            '/query/similarity',
+            json={"query": query, "max_results": max_results}
+        )
 
 def main():
+    st.set_page_config(page_title="Vector Search", layout="wide")
+    
+    # Initialize session state
+    if 'api_client' not in st.session_state:
+        st.session_state.api_client = APIClient('https://smooth-dryers-jump.loca.lt')  # Replace with your localtunnel URL
+    
+    # Main layout
     st.title("Vector Search")
     
-    # Create two columns for the main layout
-    left_col, right_col = st.columns([3, 4])
+    # Left column - Search and Configuration
+    left_col, right_col = st.columns([1, 1])
     
     with left_col:
         # Query input
@@ -148,87 +78,97 @@ def main():
             height=100
         )
         
-        # Search button
         if st.button("Retrieval", type="primary"):
             if query:
                 # Submit query
-                make_api_request(
-                    "/query/submit",
-                    method="POST",
-                    data={"query": query}
-                )
-                
-                # Retrieve results
-                results = make_api_request("/query/retrieve", method="POST")
-                
-                if results.get("results"):
-                    st.session_state.search_results = results["results"]
-                else:
-                    st.warning("No results found.")
+                submit_response = st.session_state.api_client.submit_query(query)
+                if submit_response:
+                    # Retrieve results
+                    results = st.session_state.api_client.retrieve_results()
+                    if results:
+                        st.session_state.search_results = results
         
         # Vector Search Configuration
-        config = config_section()
-        
-        # Apply configuration button
-        if st.button("Apply Configuration"):
-            config_response = make_api_request(
-                "/vector-search/configure",
-                method="POST",
-                params=config
+        with st.expander("Vector Search Configuration", expanded=True):
+            config = {}
+            
+            # Doc Correlation
+            config['doc_correlation'] = st.slider(
+                "Doc Correlation (optional)",
+                min_value=0.0,
+                max_value=0.95,
+                value=0.85,
+                step=0.01
             )
-            st.success("Configuration updated successfully!")
-
-    # Display results in right column
+            
+            # Recall Number
+            config['recall_number'] = st.slider(
+                "Recall Number",
+                min_value=1,
+                max_value=50,
+                value=10
+            )
+            
+            # Knowledge retrieval weight
+            retrieval_weight = st.radio(
+                "Knowledge retrieval weight",
+                options=["Mixed", "Semantic", "Keyword"],
+                horizontal=True
+            )
+            config['retrieval_weight'] = retrieval_weight
+            
+            if retrieval_weight == "Mixed":
+                config['mixed_percentage'] = st.slider(
+                    "",
+                    min_value=0,
+                    max_value=100,
+                    value=50
+                )
+            
+            # Rerank Model
+            config['rerank_enabled'] = st.radio(
+                "Rerank Model",
+                options=["Enable", "Disable"],
+                horizontal=True
+            ) == "Enable"
+            
+            if st.button("Apply Configuration"):
+                response = st.session_state.api_client.configure_search(config)
+                if response:
+                    st.success("Configuration updated successfully")
+    
+    # Right column - Search Results
     with right_col:
         st.subheader("Search Results")
         
-        if "search_results" in st.session_state:
-            for idx, result in enumerate(st.session_state.search_results, 1):
+        if 'search_results' in st.session_state and st.session_state.search_results:
+            results = st.session_state.search_results.get('results', [])
+            
+            for result in results:
                 with st.container():
-                    st.markdown(f"""
-                    ##### {idx:03d} {result['tokens']} tokens
+                    col1, col2 = st.columns([0.8, 0.2])
                     
-                    **Chunk ID:** {result['id']}
+                    with col1:
+                        st.markdown(f"🔄 {result['id']}")
                     
-                    **Content:** {result['content']}
+                    with col2:
+                        st.markdown(f"{result.get('tokens', 0)} tokens")
                     
-                    **Correlation:** {result['correlation']}
-                    """)
+                    st.markdown(result['content'])
                     
-                    # Display metadata as tags
-                    if result.get('metadata'):
-                        metadata_tags = []
-                        for key, value in result['metadata'].items():
-                            if isinstance(value, bool):
-                                value = str(value).lower()
-                            metadata_tags.append(f"*{key}*: {value}")
-                        st.markdown(" • ".join(metadata_tags))
+                    # Display keywords as tags
+                    if 'metadata' in result and 'keywords' in result['metadata']:
+                        keywords = result['metadata']['keywords']
+                        if isinstance(keywords, str):
+                            keywords = keywords.split(',')
+                        
+                        cols = st.columns(len(keywords))
+                        for idx, keyword in enumerate(keywords):
+                            with cols[idx]:
+                                st.markdown(f"<span style='background-color: #f0f2f6; padding: 2px 8px; border-radius: 10px;'>{keyword.strip()}</span>", unsafe_allow_html=True)
                     
+                    st.markdown(f"Correlation: {result['correlation']}")
                     st.divider()
 
 if __name__ == "__main__":
-    st.set_page_config(
-        page_title="Vector Search",
-        layout="wide",
-        initial_sidebar_state="collapsed"
-    )
-    
-    # Custom CSS to match the design more closely
-    st.markdown("""
-        <style>
-        .stRadio > label {
-            display: none !important;
-        }
-        .stExpander {
-            border: 1px solid #e6e6e6;
-            border-radius: 6px;
-            padding: 10px;
-        }
-        .stSlider {
-            padding-top: 1rem;
-            padding-bottom: 1rem;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
     main()
